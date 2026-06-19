@@ -1,7 +1,7 @@
 # Schwarzschild Geodesic Tracer
 
 A from-scratch C++ renderer that traces photon paths (null geodesics)
-around a non-rotating Schwarzschild black hole — gravitational lensing,
+around a non-rotating Schwarzschild black hole gravitational lensing,
 photon ring, event horizon shadow.
 
 ## Status
