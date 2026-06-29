@@ -70,9 +70,9 @@ static GLuint buildProgram(const std::string &vertPath, const std::string &fragP
 }
 
 // Camera state
-static V3 camPos = {0.f, 2.f, -50.f};
+static V3 camPos = {0.f, 8.f, -25.f};
 static float yaw = 90.f; // degrees, facing +Z toward hole
-static float pitch = 0.f;
+static float pitch = -15.f;
 static float speed = 5.f;
 static double lastX = 640, lastY = 360;
 static bool firstMouse = true;
@@ -118,6 +118,12 @@ static void processInput(GLFWwindow *w, float dt)
         camPos.y += speed * dt;
     if (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
         camPos.y -= speed * dt;
+    if (glfwGetKey(w, GLFW_KEY_Q) == GLFW_PRESS)
+        speed = 15.f;
+    else if (glfwGetKey(w, GLFW_KEY_E) == GLFW_PRESS)
+        speed = 1.f;
+    else
+        speed = 5.f;
 }
 
 // Entry point
@@ -168,12 +174,25 @@ int main()
     double prevTime = glfwGetTime();
     float elapsed = 0.f;
 
+    int frameCount = 0;
+    double fpsTimer = glfwGetTime();
+
     while (!glfwWindowShouldClose(window))
     {
         double now = glfwGetTime();
         float dt = float(now - prevTime);
         prevTime = now;
         elapsed += dt;
+
+        frameCount++;
+        if (now - fpsTimer >= 1.0)
+        {
+            char title[64];
+            std::snprintf(title, sizeof(title), "Schwarzschild Tracer | %d FPS", frameCount);
+            glfwSetWindowTitle(window, title);
+            frameCount = 0;
+            fpsTimer = now;
+        }
 
         processInput(window, dt);
 
