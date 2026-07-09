@@ -70,9 +70,9 @@ static GLuint buildProgram(const std::string &vertPath, const std::string &fragP
 }
 
 // Camera state
-static V3 camPos = {0.f, 8.f, -25.f};
+static V3 camPos = {0.f, 0.05f, -30.f};
 static float yaw = 90.f; // degrees, facing +Z toward hole
-static float pitch = -15.f;
+static float pitch = 0.0f;
 static float speed = 5.f;
 static double lastX = 640, lastY = 360;
 static bool firstMouse = true;
@@ -208,6 +208,7 @@ int main()
         glUniform1f(glGetUniformLocation(prog, "fov"), 60.f);
         glUniform1f(glGetUniformLocation(prog, "aspectRatio"), float(W) / float(H));
         glUniform1f(glGetUniformLocation(prog, "time"), elapsed);
+        glUniform1f(glGetUniformLocation(prog, "camHeight"), camPos.y);
 
         glClear(GL_COLOR_BUFFER_BIT);
         glBindVertexArray(vao);
