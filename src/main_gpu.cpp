@@ -6,7 +6,6 @@
 #include <string>
 #include <cmath>
 
-// Vec3 inline (avoids pulling in the full Vec3.h dependency)
 struct V3
 {
     float x, y, z;
@@ -24,7 +23,6 @@ V3 operator+(V3 a, V3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 V3 operator-(V3 a, V3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 V3 operator*(V3 v, float s) { return {v.x * s, v.y * s, v.z * s}; }
 
-// Shader loading
 static std::string readFile(const std::string &path)
 {
     std::ifstream f(path);
@@ -69,10 +67,9 @@ static GLuint buildProgram(const std::string &vertPath, const std::string &fragP
     return prog;
 }
 
-// Camera state
-static V3 camPos = {0.f, 0.05f, -30.f};
-static float yaw = 90.f; // degrees, facing +Z toward hole
-static float pitch = 0.0f;
+static V3 camPos = {0.f, 0.5f, -30.f};
+static float yaw = 90.f;
+static float pitch = -1.0f;
 static float speed = 5.f;
 static double lastX = 640, lastY = 360;
 static bool firstMouse = true;
@@ -126,7 +123,6 @@ static void processInput(GLFWwindow *w, float dt)
         speed = 5.f;
 }
 
-// Entry point
 int main()
 {
     if (!glfwInit())
@@ -138,7 +134,7 @@ int main()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow *window = glfwCreateWindow(1280, 720, "Schwarzschild Tracer", nullptr, nullptr);
+    GLFWwindow *window = glfwCreateWindow(1280, 720, "Schwarzschild Black Hole Tracer", nullptr, nullptr);
     if (!window)
     {
         std::cerr << "Window failed\n";
@@ -157,7 +153,6 @@ int main()
         return -1;
     }
 
-    // Full screen quad
     float verts[] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
@@ -173,7 +168,6 @@ int main()
 
     double prevTime = glfwGetTime();
     float elapsed = 0.f;
-
     int frameCount = 0;
     double fpsTimer = glfwGetTime();
 
@@ -183,12 +177,13 @@ int main()
         float dt = float(now - prevTime);
         prevTime = now;
         elapsed += dt;
-
         frameCount++;
+
         if (now - fpsTimer >= 1.0)
         {
             char title[64];
-            std::snprintf(title, sizeof(title), "Schwarzschild Tracer | %d FPS", frameCount);
+            std::snprintf(title, sizeof(title),
+                          "Schwarzschild Black Hole Tracer  |  %d FPS", frameCount);
             glfwSetWindowTitle(window, title);
             frameCount = 0;
             fpsTimer = now;
@@ -208,7 +203,6 @@ int main()
         glUniform1f(glGetUniformLocation(prog, "fov"), 60.f);
         glUniform1f(glGetUniformLocation(prog, "aspectRatio"), float(W) / float(H));
         glUniform1f(glGetUniformLocation(prog, "time"), elapsed);
-        glUniform1f(glGetUniformLocation(prog, "camHeight"), camPos.y);
 
         glClear(GL_COLOR_BUFFER_BIT);
         glBindVertexArray(vao);
