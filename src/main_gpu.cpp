@@ -1,210 +1,347 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
-#include <iostream>
+
+#include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
-#include <cmath>
 
 struct V3
 {
     float x, y, z;
 };
+
 V3 normalize(V3 v)
 {
-    float l = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    return {v.x / l, v.y / l, v.z / l};
+    float length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    return {v.x / length, v.y / length, v.z / length};
 }
+
 V3 cross(V3 a, V3 b)
 {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x};
 }
+
 V3 operator+(V3 a, V3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 V3 operator-(V3 a, V3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 V3 operator*(V3 v, float s) { return {v.x * s, v.y * s, v.z * s}; }
 
-static std::string readFile(const std::string &path)
+std::string readFile(const std::string &path)
 {
-    std::ifstream f(path);
-    if (!f)
+    std::ifstream file(path);
+    if (!file)
     {
-        std::cerr << "Cannot open: " << path << "\n";
+        std::cerr << "Could not open shader: " << path << "\n";
         return "";
     }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
+
+    std::stringstream stream;
+    stream << file.rdbuf();
+    return stream.str();
 }
 
-static GLuint compileShader(GLenum type, const std::string &src)
+GLuint compileShader(GLenum type, const std::string &source)
 {
-    GLuint s = glCreateShader(type);
-    const char *c = src.c_str();
-    glShaderSource(s, 1, &c, nullptr);
-    glCompileShader(s);
-    GLint ok;
-    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
-    if (!ok)
+    GLuint shader = glCreateShader(type);
+    const char *text = source.c_str();
+
+    glShaderSource(shader, 1, &text, nullptr);
+    glCompileShader(shader);
+
+    GLint success = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+
+    if (!success)
     {
-        char log[1024];
-        glGetShaderInfoLog(s, 1024, nullptr, log);
-        std::cerr << "Shader error:\n"
+        char log[2048];
+        glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+        std::cerr << "Shader compilation error:\n"
                   << log << "\n";
     }
-    return s;
+
+    return shader;
 }
 
-static GLuint buildProgram(const std::string &vertPath, const std::string &fragPath)
+GLuint buildProgram(const std::string &vertexPath, const std::string &fragmentPath)
 {
-    GLuint vert = compileShader(GL_VERTEX_SHADER, readFile(vertPath));
-    GLuint frag = compileShader(GL_FRAGMENT_SHADER, readFile(fragPath));
-    GLuint prog = glCreateProgram();
-    glAttachShader(prog, vert);
-    glAttachShader(prog, frag);
-    glLinkProgram(prog);
-    glDeleteShader(vert);
-    glDeleteShader(frag);
-    return prog;
+    GLuint vertex = compileShader(GL_VERTEX_SHADER, readFile(vertexPath));
+    GLuint fragment = compileShader(GL_FRAGMENT_SHADER, readFile(fragmentPath));
+
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertex);
+    glAttachShader(program, fragment);
+    glLinkProgram(program);
+
+    GLint success = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+
+    if (!success)
+    {
+        char log[2048];
+        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        std::cerr << "Program link error:\n"
+                  << log << "\n";
+    }
+
+    glDeleteShader(vertex);
+    glDeleteShader(fragment);
+    return program;
 }
 
-static V3 camPos = {0.f, 0.5f, -30.f};
-static float yaw = 90.f;
-static float pitch = -1.0f;
-static float speed = 5.f;
-static double lastX = 640, lastY = 360;
+struct RenderTarget
+{
+    GLuint framebuffer = 0;
+    GLuint texture = 0;
+    int width = 0;
+    int height = 0;
+};
+
+void createRenderTarget(RenderTarget &target, int width, int height)
+{
+    if (target.width == width && target.height == height)
+        return;
+
+    if (target.texture)
+        glDeleteTextures(1, &target.texture);
+    if (target.framebuffer)
+        glDeleteFramebuffers(1, &target.framebuffer);
+
+    target.width = width;
+    target.height = height;
+
+    glGenFramebuffers(1, &target.framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
+
+    glGenTextures(1, &target.texture);
+    glBindTexture(GL_TEXTURE_2D, target.texture);
+
+    glTexImage2D(
+        GL_TEXTURE_2D, 0, GL_RGBA8,
+        width, height, 0,
+        GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    // Linear filtering makes the lower-resolution render look smoother.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glFramebufferTexture2D(
+        GL_FRAMEBUFFER,
+        GL_COLOR_ATTACHMENT0,
+        GL_TEXTURE_2D,
+        target.texture,
+        0);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cerr << "Render target creation failed.\n";
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+static V3 camPos = {0.0f, 7.0f, -30.0f};
+static float yaw = 90.0f;
+static float pitch = -13.0f;
+static float speed = 5.0f;
+static double lastX = 640.0;
+static double lastY = 360.0;
 static bool firstMouse = true;
 
-static V3 forward()
+V3 forward()
 {
-    float y = yaw * 3.14159f / 180.f, p = pitch * 3.14159f / 180.f;
-    return normalize({std::cos(p) * std::cos(y), std::sin(p), std::cos(p) * std::sin(y)});
-}
-static V3 right() { return normalize(cross(forward(), {0, 1, 0})); }
-static V3 up() { return normalize(cross(right(), forward())); }
+    constexpr float DEG_TO_RAD = 3.14159265f / 180.0f;
+    float y = yaw * DEG_TO_RAD;
+    float p = pitch * DEG_TO_RAD;
 
-static void mouseCallback(GLFWwindow *, double xpos, double ypos)
+    return normalize({std::cos(p) * std::cos(y),
+                      std::sin(p),
+                      std::cos(p) * std::sin(y)});
+}
+
+V3 right()
+{
+    return normalize(cross(forward(), {0.0f, 1.0f, 0.0f}));
+}
+
+V3 up()
+{
+    return normalize(cross(right(), forward()));
+}
+
+void mouseCallback(GLFWwindow *, double x, double y)
 {
     if (firstMouse)
     {
-        lastX = xpos;
-        lastY = ypos;
+        lastX = x;
+        lastY = y;
         firstMouse = false;
     }
-    float dx = float(xpos - lastX) * 0.1f;
-    float dy = float(lastY - ypos) * 0.1f;
-    lastX = xpos;
-    lastY = ypos;
+
+    float dx = static_cast<float>(x - lastX) * 0.1f;
+    float dy = static_cast<float>(lastY - y) * 0.1f;
+
+    lastX = x;
+    lastY = y;
+
     yaw += dx;
-    pitch = std::max(-89.f, std::min(89.f, pitch + dy));
+    pitch = std::clamp(pitch + dy, -89.0f, 89.0f);
 }
 
-static void processInput(GLFWwindow *w, float dt)
+void processInput(GLFWwindow *window, float deltaTime)
 {
-    if (glfwGetKey(w, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        glfwSetWindowShouldClose(w, true);
-    V3 fwd = forward(), rgt = right();
-    if (glfwGetKey(w, GLFW_KEY_W) == GLFW_PRESS)
-        camPos = camPos + fwd * (speed * dt);
-    if (glfwGetKey(w, GLFW_KEY_S) == GLFW_PRESS)
-        camPos = camPos - fwd * (speed * dt);
-    if (glfwGetKey(w, GLFW_KEY_A) == GLFW_PRESS)
-        camPos = camPos - rgt * (speed * dt);
-    if (glfwGetKey(w, GLFW_KEY_D) == GLFW_PRESS)
-        camPos = camPos + rgt * (speed * dt);
-    if (glfwGetKey(w, GLFW_KEY_SPACE) == GLFW_PRESS)
-        camPos.y += speed * dt;
-    if (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
-        camPos.y -= speed * dt;
-    if (glfwGetKey(w, GLFW_KEY_Q) == GLFW_PRESS)
-        speed = 15.f;
-    else if (glfwGetKey(w, GLFW_KEY_E) == GLFW_PRESS)
-        speed = 1.f;
-    else
-        speed = 5.f;
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, true);
+
+    V3 fwd = forward();
+    V3 rgt = right();
+
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        camPos = camPos + fwd * (speed * deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        camPos = camPos - fwd * (speed * deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        camPos = camPos - rgt * (speed * deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        camPos = camPos + rgt * (speed * deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+        camPos.y += speed * deltaTime;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
+        camPos.y -= speed * deltaTime;
+
+    speed = glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS ? 15.0f : glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS ? 1.0f
+                                                                                                                : 5.0f;
 }
 
 int main()
 {
     if (!glfwInit())
-    {
-        std::cerr << "GLFW init failed\n";
         return -1;
-    }
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow *window = glfwCreateWindow(1280, 720, "Schwarzschild Black Hole Tracer", nullptr, nullptr);
+    GLFWwindow *window = glfwCreateWindow(
+        1280, 720,
+        "Schwarzschild Black Hole Tracer",
+        nullptr, nullptr);
+
     if (!window)
     {
-        std::cerr << "Window failed\n";
         glfwTerminate();
         return -1;
     }
+
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
+
     glfwSetCursorPosCallback(window, mouseCallback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK)
     {
-        std::cerr << "GLEW init failed\n";
+        glfwTerminate();
         return -1;
     }
 
-    float verts[] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
+    float vertices[] = {
+        -1, -1, 1, -1, 1, 1,
+        -1, -1, 1, 1, -1, 1};
+
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
+
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     glEnableVertexAttribArray(0);
 
-    GLuint prog = buildProgram("../src/shaders/vert.glsl", "../src/shaders/frag.glsl");
-    glUseProgram(prog);
+    GLuint blackHoleProgram = buildProgram(
+        "../src/shaders/vert.glsl",
+        "../src/shaders/frag.glsl");
 
-    double prevTime = glfwGetTime();
-    float elapsed = 0.f;
+    GLuint presentProgram = buildProgram(
+        "../src/shaders/vert.glsl",
+        "../src/shaders/present_frag.glsl");
+
+    RenderTarget blackHoleTarget;
+
+    constexpr float RENDER_SCALE = 0.65f; // Try 0.50 on slower laptops.
+
+    double previousTime = glfwGetTime();
+    double fpsStart = previousTime;
     int frameCount = 0;
-    double fpsTimer = glfwGetTime();
+    float elapsed = 0.0f;
 
     while (!glfwWindowShouldClose(window))
     {
         double now = glfwGetTime();
-        float dt = float(now - prevTime);
-        prevTime = now;
-        elapsed += dt;
+        float deltaTime = static_cast<float>(now - previousTime);
+        previousTime = now;
+        elapsed += deltaTime;
         frameCount++;
 
-        if (now - fpsTimer >= 1.0)
+        if (now - fpsStart >= 1.0)
         {
-            char title[64];
-            std::snprintf(title, sizeof(title),
-                          "Schwarzschild Black Hole Tracer  |  %d FPS", frameCount);
-            glfwSetWindowTitle(window, title);
+            std::string title = "Schwarzschild Black Hole Tracer | " +
+                                std::to_string(frameCount) + " FPS";
+            glfwSetWindowTitle(window, title.c_str());
+
             frameCount = 0;
-            fpsTimer = now;
+            fpsStart = now;
         }
 
-        processInput(window, dt);
+        processInput(window, deltaTime);
 
-        int W, H;
-        glfwGetFramebufferSize(window, &W, &H);
-        glViewport(0, 0, W, H);
+        int screenWidth, screenHeight;
+        glfwGetFramebufferSize(window, &screenWidth, &screenHeight);
 
-        V3 fwd = forward(), rgt = right(), u = up();
-        glUniform3f(glGetUniformLocation(prog, "camPos"), camPos.x, camPos.y, camPos.z);
-        glUniform3f(glGetUniformLocation(prog, "camForward"), fwd.x, fwd.y, fwd.z);
-        glUniform3f(glGetUniformLocation(prog, "camRight"), rgt.x, rgt.y, rgt.z);
-        glUniform3f(glGetUniformLocation(prog, "camUp"), u.x, u.y, u.z);
-        glUniform1f(glGetUniformLocation(prog, "fov"), 60.f);
-        glUniform1f(glGetUniformLocation(prog, "aspectRatio"), float(W) / float(H));
-        glUniform1f(glGetUniformLocation(prog, "time"), elapsed);
+        int renderWidth = std::max(1, static_cast<int>(screenWidth * RENDER_SCALE));
+        int renderHeight = std::max(1, static_cast<int>(screenHeight * RENDER_SCALE));
 
+        createRenderTarget(blackHoleTarget, renderWidth, renderHeight);
+
+        // Pass 1: expensive black-hole calculation at lower resolution.
+        glBindFramebuffer(GL_FRAMEBUFFER, blackHoleTarget.framebuffer);
+        glViewport(0, 0, renderWidth, renderHeight);
         glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(blackHoleProgram);
+
+        V3 fwd = forward();
+        V3 rgt = right();
+        V3 cameraUp = up();
+
+        glUniform3f(glGetUniformLocation(blackHoleProgram, "camPos"), camPos.x, camPos.y, camPos.z);
+        glUniform3f(glGetUniformLocation(blackHoleProgram, "camForward"), fwd.x, fwd.y, fwd.z);
+        glUniform3f(glGetUniformLocation(blackHoleProgram, "camRight"), rgt.x, rgt.y, rgt.z);
+        glUniform3f(glGetUniformLocation(blackHoleProgram, "camUp"), cameraUp.x, cameraUp.y, cameraUp.z);
+        glUniform1f(glGetUniformLocation(blackHoleProgram, "aspectRatio"),
+                    static_cast<float>(renderWidth) / static_cast<float>(renderHeight));
+        glUniform1f(glGetUniformLocation(blackHoleProgram, "time"), elapsed);
+
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        // Pass 2: cheap upscale to the full display resolution.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, screenWidth, screenHeight);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(presentProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, blackHoleTarget.texture);
+        glUniform1i(glGetUniformLocation(presentProgram, "sourceTexture"), 0);
+
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
@@ -212,9 +349,13 @@ int main()
         glfwPollEvents();
     }
 
-    glDeleteProgram(prog);
+    glDeleteProgram(blackHoleProgram);
+    glDeleteProgram(presentProgram);
+    glDeleteTextures(1, &blackHoleTarget.texture);
+    glDeleteFramebuffers(1, &blackHoleTarget.framebuffer);
     glDeleteBuffers(1, &vbo);
     glDeleteVertexArrays(1, &vao);
+
     glfwTerminate();
     return 0;
 }
